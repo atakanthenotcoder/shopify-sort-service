@@ -264,7 +264,32 @@ app.post('/sort-all', async (req, res) => {
   console.log('\n🎉 Tüm collection\'lar tamamlandı!');
 });
 
-// ─── SAĞLIK KONTROLÜ ─────────────────────────────────────────────────────────
+// ─── TARAYICIDAN TETİKLEME → GET /run?secret=xxx ────────────────────────────
+app.get('/run', async (req, res) => {
+  if (req.query.secret !== WEBHOOK_SECRET) {
+    return res.status(401).send('Unauthorized');
+  }
+  res.send('Sort basladi! Render loglarini izleyin.');
+  console.log('
+ Tum collectionlar sirálaniyor...');
+  for (const [color, collId] of Object.entries(COLOR_COLLECTIONS)) {
+    try {
+      console.log(`
+  ${color}...`);
+      const products = await getCollectionProducts(collId);
+      await setManualSort(collId);
+      const stats = await reorderCollection(collId, color, products);
+      console.log(`  G1=${stats.g1} G2=${stats.g2} G3=${stats.g3} G4=${stats.g4}`);
+    } catch (err) {
+      console.error(`  HATA ${color}:`, err.message);
+    }
+    await sleep(1000);
+  }
+  console.log('
+ Tamamlandi!');
+});
+
+// ─── SAGLIK KONTROLU ─────────────────────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '2.0' });
 });
@@ -272,3 +297,5 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Sort Service v2 çalışıyor | port ${PORT}`);
 });
+
+// ─── TARAYICIDAN TETİKLEME → GET /run?secret=xxx ────────────────────────────
