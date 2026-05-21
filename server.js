@@ -148,7 +148,9 @@ async function reorderCollection(collectionId, colorKey, products) {
   const ordered = [...g1, ...g2, ...g3, ...g4];
   if (!ordered.length) return { g1:0, g2:0, g3:0, g4:0, total:0 };
 
-  const moves = ordered.map((id, idx) => ({ id, newPosition: String(idx) }));
+  // Shopify'da newPosition büyük sayı = en üst
+  // g1 en üste gelsin: total-1, total-2... g4 en alta: 0,1,2
+  const moves = ordered.map((id, idx) => ({ id, newPosition: String(ordered.length - 1 - idx) }));
   for (let i = 0; i < moves.length; i += 50) {
     await gql(`
       mutation($id: ID!, $moves: [MoveInput!]!) {
