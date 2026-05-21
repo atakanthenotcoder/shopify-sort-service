@@ -3,8 +3,6 @@ const crypto  = require('crypto');
 const app     = express();
 
 const SHOP_DOMAIN            = process.env.SHOP_DOMAIN;
-const CLIENT_ID              = process.env.CLIENT_ID;
-const CLIENT_SECRET          = process.env.CLIENT_SECRET;
 const ACCESS_TOKEN           = process.env.ACCESS_TOKEN;
 const WEBHOOK_SECRET         = process.env.WEBHOOK_SECRET || 'rugs2026secret';
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
@@ -27,46 +25,21 @@ const COLOR_COLLECTIONS = {
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// Token al — once ACCESS_TOKEN'i dene, olmazsa Client Credentials ile al
-let cachedToken = null;
-
-async function getToken() {
-  // Direkt token varsa kullan
-  if (ACCESS_TOKEN) return ACCESS_TOKEN;
-  // Cache'de varsa kullan
-  if (cachedToken) return cachedToken;
-  // Client credentials ile token al
-  const res = await fetch('https://' + SHOP_DOMAIN + '/admin/oauth/access_token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: 'client_credentials'
-    })
-  });
-  const json = await res.json();
-  if (json.access_token) {
-    cachedToken = json.access_token;
-    return cachedToken;
-  }
-  throw new Error('Token alinamadi: ' + JSON.stringify(json));
-}
-
 async function gql(query, variables = {}) {
-  const token = await getToken();
   const res = await fetch(
     'https://' + SHOP_DOMAIN + '/admin/api/' + API_VERSION + '/graphql.json',
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': token,
+        'X-Shopify-Access-Token': ACCESS_TOKEN,
       },
       body: JSON.stringify({ query, variables }),
     }
   );
-  const json = await res.json();
+  const text = await res.text();
+  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + text);
+  const json = JSON.parse(text);
   if (json.errors) throw new Error(JSON.stringify(json.errors));
   return json.data;
 }
@@ -188,11 +161,11 @@ async function sortAllCollections() {
 
 async function processProduct(productId) {
   const product = await getProductMetafields(productId);
-  console.log('Product: ' + product.title + ' | primary:' + product.colorPrimary + ' secondary:' + product.colorSecondary + ' damaged:' + product.damaged);
+  console.log('Product: ' + product.title + ' primary:' + product.colorPrimary + ' secondary:' + product.colorSecondary + ' damaged:' + product.damaged);
   const colors = new Set();
   if (product.colorPrimary   && COLOR_COLLECTIONS[product.colorPrimary])   colors.add(product.colorPrimary);
   if (product.colorSecondary && COLOR_COLLECTIONS[product.colorSecondary]) colors.add(product.colorSecondary);
-  if (!colors.size) { console.log('No color metafield, skipping'); return; }
+  if (!colors.size) { console.log('No color metafield'); return; }
   for (const color of colors) {
     const collId = COLOR_COLLECTIONS[color];
     const colProducts = await getCollectionProducts(collId);
@@ -203,11 +176,8 @@ async function processProduct(productId) {
   }
 }
 
-// Shopify Flow -> POST /sort
 app.post('/sort', async (req, res) => {
-  if (req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) return res.status(401).json({ error: 'Unauthorized' });
   const rawId = req.body.product_id || req.body.id;
   if (!rawId) return res.status(400).json({ error: 'product_id missing' });
   const productId = rawId.startsWith('gid://') ? rawId : 'gid://shopify/Product/' + rawId;
@@ -215,12 +185,11 @@ app.post('/sort', async (req, res) => {
   processProduct(productId).catch(err => console.error('Error:', err.message));
 });
 
-// Shopify Native Webhook -> POST /webhook
 app.post('/webhook', async (req, res) => {
   if (SHOPIFY_WEBHOOK_SECRET) {
     const hmac   = req.headers['x-shopify-hmac-sha256'];
     const digest = crypto.createHmac('sha256', SHOPIFY_WEBHOOK_SECRET).update(req.body).digest('base64');
-    if (digest !== hmac) { return res.status(401).json({ error: 'Invalid signature' }); }
+    if (digest !== hmac) return res.status(401).json({ error: 'Invalid signature' });
   }
   let data;
   try { data = JSON.parse(req.body.toString()); } catch { return res.status(400).json({ error: 'Invalid JSON' }); }
@@ -231,31 +200,35 @@ app.post('/webhook', async (req, res) => {
   processProduct(productId).catch(err => console.error('Error:', err.message));
 });
 
-// Sort all -> POST /sort-all
 app.post('/sort-all', async (req, res) => {
-  if (req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (req.headers['x-webhook-secret'] !== WEBHOOK_SECRET) return res.status(401).json({ error: 'Unauthorized' });
   res.status(200).json({ status: 'processing all' });
   sortAllCollections().catch(err => console.error('Error:', err.message));
 });
 
-// Tarayicidan tetikleme -> GET /run?secret=xxx
 app.get('/run', async (req, res) => {
-  if (req.query.secret !== WEBHOOK_SECRET) {
-    return res.status(401).send('Unauthorized');
-  }
+  if (req.query.secret !== WEBHOOK_SECRET) return res.status(401).send('Unauthorized');
   res.send('Sort started! Check Render logs.');
   sortAllCollections().catch(err => console.error('Error:', err.message));
 });
 
-// Health check
+// Token test endpoint
+app.get('/test-token', async (req, res) => {
+  if (req.query.secret !== WEBHOOK_SECRET) return res.status(401).send('Unauthorized');
+  try {
+    const data = await gql('{ shop { name myshopifyDomain } }');
+    res.json({ success: true, shop: data.shop });
+  } catch (err) {
+    res.json({ success: false, error: err.message, token_prefix: ACCESS_TOKEN ? ACCESS_TOKEN.substring(0, 10) : 'NOT SET' });
+  }
+});
+
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '2.1' });
+  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '2.2', token_set: !!ACCESS_TOKEN });
 });
 
 app.listen(PORT, () => {
-  console.log('Sort Service v2.1 running on port ' + PORT);
+  console.log('Sort Service v2.2 running on port ' + PORT);
   console.log('Shop: ' + SHOP_DOMAIN);
-  console.log('Token mode: ' + (ACCESS_TOKEN ? 'ACCESS_TOKEN' : 'CLIENT_CREDENTIALS'));
+  console.log('Token prefix: ' + (ACCESS_TOKEN ? ACCESS_TOKEN.substring(0, 10) + '...' : 'NOT SET'));
 });
