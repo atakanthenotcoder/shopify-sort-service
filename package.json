@@ -1,0 +1,12 @@
+{
+  "name": "shopify-sort-service",
+  "version": "1.0.0",
+  "description": "Shopify collection auto-sort service",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
