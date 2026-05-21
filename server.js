@@ -2,12 +2,14 @@ const express = require('express');
 const crypto  = require('crypto');
 const app     = express();
 
-const SHOP_DOMAIN        = process.env.SHOP_DOMAIN;
-const ACCESS_TOKEN       = process.env.ACCESS_TOKEN;
-const WEBHOOK_SECRET     = process.env.WEBHOOK_SECRET || 'rugs2026secret';
+const SHOP_DOMAIN            = process.env.SHOP_DOMAIN;
+const CLIENT_ID              = process.env.CLIENT_ID;
+const CLIENT_SECRET          = process.env.CLIENT_SECRET;
+const ACCESS_TOKEN           = process.env.ACCESS_TOKEN;
+const WEBHOOK_SECRET         = process.env.WEBHOOK_SECRET || 'rugs2026secret';
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
-const PORT               = process.env.PORT || 3000;
-const API_VERSION        = '2025-01';
+const PORT                   = process.env.PORT || 3000;
+const API_VERSION            = '2025-01';
 
 const COLOR_COLLECTIONS = {
   'red':    'gid://shopify/Collection/517502239042',
@@ -25,14 +27,41 @@ const COLOR_COLLECTIONS = {
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
+// Token al — once ACCESS_TOKEN'i dene, olmazsa Client Credentials ile al
+let cachedToken = null;
+
+async function getToken() {
+  // Direkt token varsa kullan
+  if (ACCESS_TOKEN) return ACCESS_TOKEN;
+  // Cache'de varsa kullan
+  if (cachedToken) return cachedToken;
+  // Client credentials ile token al
+  const res = await fetch('https://' + SHOP_DOMAIN + '/admin/oauth/access_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'client_credentials'
+    })
+  });
+  const json = await res.json();
+  if (json.access_token) {
+    cachedToken = json.access_token;
+    return cachedToken;
+  }
+  throw new Error('Token alinamadi: ' + JSON.stringify(json));
+}
+
 async function gql(query, variables = {}) {
+  const token = await getToken();
   const res = await fetch(
-    `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`,
+    'https://' + SHOP_DOMAIN + '/admin/api/' + API_VERSION + '/graphql.json',
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': ACCESS_TOKEN,
+        'X-Shopify-Access-Token': token,
       },
       body: JSON.stringify({ query, variables }),
     }
@@ -227,4 +256,6 @@ app.get('/health', (req, res) => {
 
 app.listen(PORT, () => {
   console.log('Sort Service v2.1 running on port ' + PORT);
+  console.log('Shop: ' + SHOP_DOMAIN);
+  console.log('Token mode: ' + (ACCESS_TOKEN ? 'ACCESS_TOKEN' : 'CLIENT_CREDENTIALS'));
 });
