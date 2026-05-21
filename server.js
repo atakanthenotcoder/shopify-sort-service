@@ -3,7 +3,8 @@ const crypto  = require('crypto');
 const app     = express();
 
 const SHOP_DOMAIN            = process.env.SHOP_DOMAIN;
-const ACCESS_TOKEN           = process.env.ACCESS_TOKEN;
+const CLIENT_ID              = process.env.CLIENT_ID;
+const CLIENT_SECRET          = process.env.CLIENT_SECRET;
 const WEBHOOK_SECRET         = process.env.WEBHOOK_SECRET || 'rugs2026secret';
 const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 const PORT                   = process.env.PORT || 3000;
@@ -25,20 +26,63 @@ const COLOR_COLLECTIONS = {
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
+// Token cache - 24 saat gecerli
+let cachedToken = null;
+let tokenExpiry = 0;
+
+async function getAccessToken() {
+  const now = Date.now();
+  if (cachedToken && now < tokenExpiry) {
+    return cachedToken;
+  }
+  console.log('Getting new access token...');
+  const params = new URLSearchParams();
+  params.append('grant_type', 'client_credentials');
+  params.append('client_id', CLIENT_ID);
+  params.append('client_secret', CLIENT_SECRET);
+
+  const res = await fetch(
+    'https://' + SHOP_DOMAIN + '/admin/oauth/access_token',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    }
+  );
+  const json = await res.json();
+  if (!json.access_token) {
+    throw new Error('Token alinamadi: ' + JSON.stringify(json));
+  }
+  cachedToken = json.access_token;
+  // expires_in saniye cinsinden - 5 dk erken yenile
+  const expiresIn = (json.expires_in || 86400) - 300;
+  tokenExpiry = now + (expiresIn * 1000);
+  console.log('New token obtained, expires in ' + expiresIn + 's, prefix: ' + cachedToken.substring(0, 10));
+  return cachedToken;
+}
+
 async function gql(query, variables = {}) {
+  const token = await getAccessToken();
   const res = await fetch(
     'https://' + SHOP_DOMAIN + '/admin/api/' + API_VERSION + '/graphql.json',
     {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': ACCESS_TOKEN,
+        'X-Shopify-Access-Token': token,
       },
       body: JSON.stringify({ query, variables }),
     }
   );
   const text = await res.text();
-  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + text);
+  if (!res.ok) {
+    // 401 gelirse token'i temizle, bir daha dene
+    if (res.status === 401) {
+      cachedToken = null;
+      tokenExpiry = 0;
+    }
+    throw new Error('HTTP ' + res.status + ': ' + text);
+  }
   const json = JSON.parse(text);
   if (json.errors) throw new Error(JSON.stringify(json.errors));
   return json.data;
@@ -212,23 +256,23 @@ app.get('/run', async (req, res) => {
   sortAllCollections().catch(err => console.error('Error:', err.message));
 });
 
-// Token test endpoint
 app.get('/test-token', async (req, res) => {
   if (req.query.secret !== WEBHOOK_SECRET) return res.status(401).send('Unauthorized');
   try {
+    const token = await getAccessToken();
     const data = await gql('{ shop { name myshopifyDomain } }');
-    res.json({ success: true, shop: data.shop });
+    res.json({ success: true, shop: data.shop, token_prefix: token.substring(0, 15) });
   } catch (err) {
-    res.json({ success: false, error: err.message, token_prefix: ACCESS_TOKEN ? ACCESS_TOKEN.substring(0, 10) : 'NOT SET' });
+    res.json({ success: false, error: err.message });
   }
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '2.2', token_set: !!ACCESS_TOKEN });
+  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '3.0' });
 });
 
 app.listen(PORT, () => {
-  console.log('Sort Service v2.2 running on port ' + PORT);
+  console.log('Sort Service v3.0 running on port ' + PORT);
   console.log('Shop: ' + SHOP_DOMAIN);
-  console.log('Token prefix: ' + (ACCESS_TOKEN ? ACCESS_TOKEN.substring(0, 10) + '...' : 'NOT SET'));
+  console.log('Client ID: ' + (CLIENT_ID ? CLIENT_ID.substring(0, 8) + '...' : 'NOT SET'));
 });
