@@ -197,7 +197,7 @@ async function sortColorCollection(colorKey, collectionId) {
   if (!ordered.length) return { g1:0, g2:0, g3:0, g4:0 };
 
   await setManualSort(collectionId);
-  const moves = ordered.map((id, idx) => ({ id, newPosition: String(ordered.length - 1 - idx) }));
+  const moves = ordered.map((id, idx) => ({ id, newPosition: String(idx) }));
   await applyMoves(collectionId, moves);
   return { g1: g1.length, g2: g2.length, g3: g3.length, g4: g4.length };
 }
@@ -212,7 +212,7 @@ async function sortOtherCollection(collectionId) {
   const ordered = [...good, ...damaged];
 
   await setManualSort(collectionId);
-  const moves = ordered.map((id, idx) => ({ id, newPosition: String(ordered.length - 1 - idx) }));
+  const moves = ordered.map((id, idx) => ({ id, newPosition: String(idx) }));
   await applyMoves(collectionId, moves);
   return { good: good.length, damaged: damaged.length };
 }
