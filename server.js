@@ -10,6 +10,7 @@ const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 const PORT                   = process.env.PORT || 3000;
 const API_VERSION            = '2025-01';
 
+// Renk collection'lari - 4 kademeli siralama
 const COLOR_COLLECTIONS = {
   'red':    'gid://shopify/Collection/517502239042',
   'white':  'gid://shopify/Collection/517502075202',
@@ -23,64 +24,88 @@ const COLOR_COLLECTIONS = {
   'blue':   'gid://shopify/Collection/517502402882',
 };
 
+// Diger collection'lar - sadece damaged/saglamda siralama
+const OTHER_COLLECTIONS = {
+  // Region
+  'turkish':      'gid://shopify/Collection/517502435650',
+  'persian':      'gid://shopify/Collection/517502468418',
+  'oushak':       'gid://shopify/Collection/517502501186',
+  // Type
+  'oversized':    'gid://shopify/Collection/517502566722',
+  'area':         'gid://shopify/Collection/517502599490',
+  'runner':       'gid://shopify/Collection/517502632258',
+  'doormat':      'gid://shopify/Collection/517502665026',
+  'round':        'gid://shopify/Collection/517502697794',
+  // Material
+  'wool':         'gid://shopify/Collection/517502730562',
+  'hemp':         'gid://shopify/Collection/517502763330',
+  'goathair':     'gid://shopify/Collection/517502828866',
+  'cotton':       'gid://shopify/Collection/517502894402',
+  // Pattern
+  'maximalist':   'gid://shopify/Collection/517502959938',
+  'minimalist':   'gid://shopify/Collection/517503025474',
+  'floral':       'gid://shopify/Collection/517503058242',
+  'geometric':    'gid://shopify/Collection/517503091010',
+  'southwestern': 'gid://shopify/Collection/517503123778',
+  'striped':      'gid://shopify/Collection/517503156546',
+  'patchwork':    'gid://shopify/Collection/517503189314',
+  'distressed':   'gid://shopify/Collection/517503222082',
+  'overdyed':     'gid://shopify/Collection/517503254850',
+  'solid':        'gid://shopify/Collection/517503287618',
+  'medallion':    'gid://shopify/Collection/517503320386',
+  // Pile
+  'flatweave':    'gid://shopify/Collection/517503353154',
+  'lowpile':      'gid://shopify/Collection/517503385922',
+  'mediumpile':   'gid://shopify/Collection/517503418690',
+  'shaggy':       'gid://shopify/Collection/517503451458',
+  // Style
+  'farmhouse':    'gid://shopify/Collection/517503484226',
+  'bohemian':     'gid://shopify/Collection/517503516994',
+  'rustic':       'gid://shopify/Collection/517503549762',
+  'traditional':  'gid://shopify/Collection/517503582530',
+  'modern':       'gid://shopify/Collection/517503615298',
+  // Special
+  'oneofakind':   'gid://shopify/Collection/517503648066',
+  'washable':     'gid://shopify/Collection/517503680834',
+};
+
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// Token cache - 24 saat gecerli
 let cachedToken = null;
 let tokenExpiry = 0;
 
 async function getAccessToken() {
   const now = Date.now();
-  if (cachedToken && now < tokenExpiry) {
-    return cachedToken;
-  }
+  if (cachedToken && now < tokenExpiry) return cachedToken;
   console.log('Getting new access token...');
   const params = new URLSearchParams();
   params.append('grant_type', 'client_credentials');
   params.append('client_id', CLIENT_ID);
   params.append('client_secret', CLIENT_SECRET);
-
-  const res = await fetch(
-    'https://' + SHOP_DOMAIN + '/admin/oauth/access_token',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: params.toString(),
-    }
-  );
+  const res = await fetch('https://' + SHOP_DOMAIN + '/admin/oauth/access_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString(),
+  });
   const json = await res.json();
-  if (!json.access_token) {
-    throw new Error('Token alinamadi: ' + JSON.stringify(json));
-  }
+  if (!json.access_token) throw new Error('Token alinamadi: ' + JSON.stringify(json));
   cachedToken = json.access_token;
-  // expires_in saniye cinsinden - 5 dk erken yenile
-  const expiresIn = (json.expires_in || 86400) - 300;
-  tokenExpiry = now + (expiresIn * 1000);
-  console.log('New token obtained, expires in ' + expiresIn + 's, prefix: ' + cachedToken.substring(0, 10));
+  tokenExpiry = now + ((json.expires_in || 86400) - 300) * 1000;
+  console.log('Token obtained: ' + cachedToken.substring(0, 10) + '...');
   return cachedToken;
 }
 
 async function gql(query, variables = {}) {
   const token = await getAccessToken();
-  const res = await fetch(
-    'https://' + SHOP_DOMAIN + '/admin/api/' + API_VERSION + '/graphql.json',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': token,
-      },
-      body: JSON.stringify({ query, variables }),
-    }
-  );
+  const res = await fetch('https://' + SHOP_DOMAIN + '/admin/api/' + API_VERSION + '/graphql.json', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({ query, variables }),
+  });
   const text = await res.text();
   if (!res.ok) {
-    // 401 gelirse token'i temizle, bir daha dene
-    if (res.status === 401) {
-      cachedToken = null;
-      tokenExpiry = 0;
-    }
+    if (res.status === 401) { cachedToken = null; tokenExpiry = 0; }
     throw new Error('HTTP ' + res.status + ': ' + text);
   }
   const json = JSON.parse(text);
@@ -90,27 +115,6 @@ async function gql(query, variables = {}) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const normalizeColor = val => val ? val.trim().toLowerCase() : null;
-
-async function getProductMetafields(productId) {
-  const data = await gql(`
-    query GetProduct($id: ID!) {
-      product(id: $id) {
-        id title
-        colorPrimary:   metafield(namespace:"custom", key:"color_primary")   { value }
-        colorSecondary: metafield(namespace:"custom", key:"color_secondary")  { value }
-        damaged:        metafield(namespace:"custom", key:"damaged")          { value }
-      }
-    }
-  `, { id: productId });
-  const p = data.product;
-  return {
-    id:             p.id,
-    title:          p.title,
-    colorPrimary:   normalizeColor(p.colorPrimary?.value),
-    colorSecondary: normalizeColor(p.colorSecondary?.value),
-    damaged:        p.damaged?.value === 'true',
-  };
-}
 
 async function getCollectionProducts(collectionId) {
   const products = [];
@@ -160,20 +164,7 @@ async function setManualSort(collectionId) {
   await sleep(300);
 }
 
-async function reorderCollection(collectionId, colorKey, products) {
-  const g1 = [], g2 = [], g3 = [], g4 = [];
-  for (const p of products) {
-    const pri = p.colorPrimary   === colorKey;
-    const sec = p.colorSecondary === colorKey;
-    const dmg = p.damaged;
-    if      (pri && !dmg) g1.push(p.id);
-    else if (pri &&  dmg) g2.push(p.id);
-    else if (sec && !dmg) g3.push(p.id);
-    else if (sec &&  dmg) g4.push(p.id);
-  }
-  const ordered = [...g1, ...g2, ...g3, ...g4];
-  if (!ordered.length) return { g1:0, g2:0, g3:0, g4:0, total:0 };
-  const moves = ordered.map((id, idx) => ({ id, newPosition: String(ordered.length - 1 - idx) }));
+async function applyMoves(collectionId, moves) {
   for (let i = 0; i < moves.length; i += 50) {
     await gql(`
       mutation($id: ID!, $moves: [MoveInput!]!) {
@@ -184,38 +175,107 @@ async function reorderCollection(collectionId, colorKey, products) {
     `, { id: collectionId, moves: moves.slice(i, i + 50) });
     await sleep(300);
   }
-  return { g1: g1.length, g2: g2.length, g3: g3.length, g4: g4.length, total: ordered.length };
+}
+
+// Renk collection - 4 kademeli siralama
+async function sortColorCollection(colorKey, collectionId) {
+  const products = await getCollectionProducts(collectionId);
+  if (!products.length) return { skip: true };
+
+  const g1 = [], g2 = [], g3 = [], g4 = [];
+  for (const p of products) {
+    const pri = p.colorPrimary   === colorKey;
+    const sec = p.colorSecondary === colorKey;
+    const dmg = p.damaged;
+    if      (pri && !dmg) g1.push(p.id);
+    else if (pri &&  dmg) g2.push(p.id);
+    else if (sec && !dmg) g3.push(p.id);
+    else if (sec &&  dmg) g4.push(p.id);
+  }
+
+  const ordered = [...g1, ...g2, ...g3, ...g4];
+  if (!ordered.length) return { g1:0, g2:0, g3:0, g4:0 };
+
+  await setManualSort(collectionId);
+  const moves = ordered.map((id, idx) => ({ id, newPosition: String(ordered.length - 1 - idx) }));
+  await applyMoves(collectionId, moves);
+  return { g1: g1.length, g2: g2.length, g3: g3.length, g4: g4.length };
+}
+
+// Diger collection - sadece damaged/saglamda siralama
+async function sortOtherCollection(collectionId) {
+  const products = await getCollectionProducts(collectionId);
+  if (!products.length) return { skip: true };
+
+  const good    = products.filter(p => !p.damaged).map(p => p.id);
+  const damaged = products.filter(p =>  p.damaged).map(p => p.id);
+  const ordered = [...good, ...damaged];
+
+  await setManualSort(collectionId);
+  const moves = ordered.map((id, idx) => ({ id, newPosition: String(ordered.length - 1 - idx) }));
+  await applyMoves(collectionId, moves);
+  return { good: good.length, damaged: damaged.length };
 }
 
 async function sortAllCollections() {
+  console.log('--- Sorting COLOR collections ---');
   for (const [color, collId] of Object.entries(COLOR_COLLECTIONS)) {
     try {
-      console.log('Sorting: ' + color);
-      const products = await getCollectionProducts(collId);
-      await setManualSort(collId);
-      const stats = await reorderCollection(collId, color, products);
-      console.log('Done ' + color + ': G1=' + stats.g1 + ' G2=' + stats.g2 + ' G3=' + stats.g3 + ' G4=' + stats.g4);
-    } catch (err) {
-      console.error('Error ' + color + ': ' + err.message);
-    }
-    await sleep(1000);
+      console.log('Color: ' + color);
+      const stats = await sortColorCollection(color, collId);
+      if (stats.skip) { console.log('  (empty)'); continue; }
+      console.log('  G1=' + stats.g1 + ' G2=' + stats.g2 + ' G3=' + stats.g3 + ' G4=' + stats.g4);
+    } catch (err) { console.error('  Error: ' + err.message); }
+    await sleep(800);
   }
-  console.log('All done!');
+
+  console.log('--- Sorting OTHER collections ---');
+  for (const [name, collId] of Object.entries(OTHER_COLLECTIONS)) {
+    try {
+      console.log('Other: ' + name);
+      const stats = await sortOtherCollection(collId);
+      if (stats.skip) { console.log('  (empty)'); continue; }
+      console.log('  Good=' + stats.good + ' Damaged=' + stats.damaged);
+    } catch (err) { console.error('  Error: ' + err.message); }
+    await sleep(800);
+  }
+
+  console.log('=== All done! ===');
 }
 
 async function processProduct(productId) {
-  const product = await getProductMetafields(productId);
-  console.log('Product: ' + product.title + ' primary:' + product.colorPrimary + ' secondary:' + product.colorSecondary + ' damaged:' + product.damaged);
+  const data = await gql(`
+    query($id: ID!) {
+      product(id: $id) {
+        id title
+        colorPrimary:   metafield(namespace:"custom", key:"color_primary")   { value }
+        colorSecondary: metafield(namespace:"custom", key:"color_secondary")  { value }
+        damaged:        metafield(namespace:"custom", key:"damaged")          { value }
+      }
+    }
+  `, { id: productId });
+  const p = data.product;
+  const product = {
+    colorPrimary:   normalizeColor(p.colorPrimary?.value),
+    colorSecondary: normalizeColor(p.colorSecondary?.value),
+    damaged:        p.damaged?.value === 'true',
+  };
+  console.log('Product: ' + p.title + ' | primary:' + product.colorPrimary + ' secondary:' + product.colorSecondary + ' damaged:' + product.damaged);
+
+  // Renk collectionlarini sirala
   const colors = new Set();
   if (product.colorPrimary   && COLOR_COLLECTIONS[product.colorPrimary])   colors.add(product.colorPrimary);
   if (product.colorSecondary && COLOR_COLLECTIONS[product.colorSecondary]) colors.add(product.colorSecondary);
-  if (!colors.size) { console.log('No color metafield'); return; }
   for (const color of colors) {
-    const collId = COLOR_COLLECTIONS[color];
-    const colProducts = await getCollectionProducts(collId);
-    await setManualSort(collId);
-    const stats = await reorderCollection(collId, color, colProducts);
-    console.log('Sorted ' + color + ': G1=' + stats.g1 + ' G2=' + stats.g2 + ' G3=' + stats.g3 + ' G4=' + stats.g4);
+    await sortColorCollection(color, COLOR_COLLECTIONS[color]);
+    await sleep(500);
+  }
+
+  // Diger tum collectionlari sirala
+  for (const [name, collId] of Object.entries(OTHER_COLLECTIONS)) {
+    try {
+      await sortOtherCollection(collId);
+    } catch (err) { console.error('Error ' + name + ': ' + err.message); }
     await sleep(500);
   }
 }
@@ -268,11 +328,10 @@ app.get('/test-token', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '3.0' });
+  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '4.0' });
 });
 
 app.listen(PORT, () => {
-  console.log('Sort Service v3.0 running on port ' + PORT);
+  console.log('Sort Service v4.0 running on port ' + PORT);
   console.log('Shop: ' + SHOP_DOMAIN);
-  console.log('Client ID: ' + (CLIENT_ID ? CLIENT_ID.substring(0, 8) + '...' : 'NOT SET'));
 });
