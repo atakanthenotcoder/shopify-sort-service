@@ -10,63 +10,18 @@ const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 const PORT                   = process.env.PORT || 3000;
 const API_VERSION            = '2025-01';
 
-// Renk collection'lari - 4 kademeli siralama
-const COLOR_COLLECTIONS = {
-  'red':    'gid://shopify/Collection/517502239042',
-  'white':  'gid://shopify/Collection/517502075202',
-  'brown':  'gid://shopify/Collection/517502107970',
-  'gray':   'gid://shopify/Collection/517502140738',
-  'beige':  'gid://shopify/Collection/517502173506',
-  'orange': 'gid://shopify/Collection/517502206274',
-  'pink':   'gid://shopify/Collection/517502271810',
-  'yellow': 'gid://shopify/Collection/517502304578',
-  'green':  'gid://shopify/Collection/517502337346',
-  'blue':   'gid://shopify/Collection/517502402882',
-};
+// Renk collection handle'lari - bunlar 4 kademeli siralanir
+const COLOR_HANDLES = [
+  'red-rugs', 'white-rugs', 'brown-rugs', 'gray-rugs', 'beige-rugs',
+  'orange-rugs', 'pink-rugs', 'yellow-rugs', 'green-rugs', 'blue-rugs'
+];
 
-// Diger collection'lar - sadece damaged/saglamda siralama
-const OTHER_COLLECTIONS = {
-  // Region
-  'turkish':      'gid://shopify/Collection/517502435650',
-  'persian':      'gid://shopify/Collection/517502468418',
-  'oushak':       'gid://shopify/Collection/517502501186',
-  // Type
-  'oversized':    'gid://shopify/Collection/517502566722',
-  'area':         'gid://shopify/Collection/517502599490',
-  'runner':       'gid://shopify/Collection/517502632258',
-  'doormat':      'gid://shopify/Collection/517502665026',
-  'round':        'gid://shopify/Collection/517502697794',
-  // Material
-  'wool':         'gid://shopify/Collection/517502730562',
-  'hemp':         'gid://shopify/Collection/517502763330',
-  'goathair':     'gid://shopify/Collection/517502828866',
-  'cotton':       'gid://shopify/Collection/517502894402',
-  // Pattern
-  'maximalist':   'gid://shopify/Collection/517502959938',
-  'minimalist':   'gid://shopify/Collection/517503025474',
-  'floral':       'gid://shopify/Collection/517503058242',
-  'geometric':    'gid://shopify/Collection/517503091010',
-  'southwestern': 'gid://shopify/Collection/517503123778',
-  'striped':      'gid://shopify/Collection/517503156546',
-  'patchwork':    'gid://shopify/Collection/517503189314',
-  'distressed':   'gid://shopify/Collection/517503222082',
-  'overdyed':     'gid://shopify/Collection/517503254850',
-  'solid':        'gid://shopify/Collection/517503287618',
-  'medallion':    'gid://shopify/Collection/517503320386',
-  // Pile
-  'flatweave':    'gid://shopify/Collection/517503353154',
-  'lowpile':      'gid://shopify/Collection/517503385922',
-  'mediumpile':   'gid://shopify/Collection/517503418690',
-  'shaggy':       'gid://shopify/Collection/517503451458',
-  // Style
-  'farmhouse':    'gid://shopify/Collection/517503484226',
-  'bohemian':     'gid://shopify/Collection/517503516994',
-  'rustic':       'gid://shopify/Collection/517503549762',
-  'traditional':  'gid://shopify/Collection/517503582530',
-  'modern':       'gid://shopify/Collection/517503615298',
-  // Special
-  'oneofakind':   'gid://shopify/Collection/517503648066',
-  'washable':     'gid://shopify/Collection/517503680834',
+// Renk handle -> metafield deger eslesimi
+const HANDLE_TO_COLOR = {
+  'red-rugs': 'red', 'white-rugs': 'white', 'brown-rugs': 'brown',
+  'gray-rugs': 'gray', 'beige-rugs': 'beige', 'orange-rugs': 'orange',
+  'pink-rugs': 'pink', 'yellow-rugs': 'yellow', 'green-rugs': 'green',
+  'blue-rugs': 'blue'
 };
 
 app.use('/webhook', express.raw({ type: 'application/json' }));
@@ -92,7 +47,7 @@ async function getAccessToken() {
   if (!json.access_token) throw new Error('Token alinamadi: ' + JSON.stringify(json));
   cachedToken = json.access_token;
   tokenExpiry = now + ((json.expires_in || 86400) - 300) * 1000;
-  console.log('Token obtained: ' + cachedToken.substring(0, 10) + '...');
+  console.log('Token OK: ' + cachedToken.substring(0, 10) + '...');
   return cachedToken;
 }
 
@@ -116,6 +71,29 @@ async function gql(query, variables = {}) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const normalizeColor = val => val ? val.trim().toLowerCase() : null;
 
+// Tum collection'lari cek (dinamik)
+async function fetchAllCollections() {
+  const collections = [];
+  let cursor = null, hasNext = true;
+  while (hasNext) {
+    const data = await gql(`
+      query($cursor: String) {
+        collections(first: 50, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          edges { node { id title handle } }
+        }
+      }
+    `, { cursor });
+    const page = data.collections;
+    for (const e of page.edges) collections.push(e.node);
+    hasNext = page.pageInfo.hasNextPage;
+    cursor  = page.pageInfo.endCursor;
+    await sleep(200);
+  }
+  return collections;
+}
+
+// Collection'daki urunleri cek
 async function getCollectionProducts(collectionId) {
   const products = [];
   let cursor = null, hasNext = true;
@@ -180,8 +158,7 @@ async function applyMoves(collectionId, moves) {
 // Renk collection - 4 kademeli siralama
 async function sortColorCollection(colorKey, collectionId) {
   const products = await getCollectionProducts(collectionId);
-  if (!products.length) return { skip: true };
-
+  if (!products.length) return { empty: true };
   const g1 = [], g2 = [], g3 = [], g4 = [];
   for (const p of products) {
     const pri = p.colorPrimary   === colorKey;
@@ -192,57 +169,56 @@ async function sortColorCollection(colorKey, collectionId) {
     else if (sec && !dmg) g3.push(p.id);
     else if (sec &&  dmg) g4.push(p.id);
   }
-
   const ordered = [...g1, ...g2, ...g3, ...g4];
   if (!ordered.length) return { g1:0, g2:0, g3:0, g4:0 };
-
   await setManualSort(collectionId);
-  const moves = ordered.map((id, idx) => ({ id, newPosition: String(idx) }));
-  await applyMoves(collectionId, moves);
+  await applyMoves(collectionId, ordered.map((id, idx) => ({ id, newPosition: String(idx) })));
   return { g1: g1.length, g2: g2.length, g3: g3.length, g4: g4.length };
 }
 
-// Diger collection - sadece damaged/saglamda siralama
+// Diger collection - saglamlar uste, damaged assagida
 async function sortOtherCollection(collectionId) {
   const products = await getCollectionProducts(collectionId);
-  if (!products.length) return { skip: true };
-
+  if (!products.length) return { empty: true };
   const good    = products.filter(p => !p.damaged).map(p => p.id);
   const damaged = products.filter(p =>  p.damaged).map(p => p.id);
   const ordered = [...good, ...damaged];
-
   await setManualSort(collectionId);
-  const moves = ordered.map((id, idx) => ({ id, newPosition: String(idx) }));
-  await applyMoves(collectionId, moves);
+  await applyMoves(collectionId, ordered.map((id, idx) => ({ id, newPosition: String(idx) })));
   return { good: good.length, damaged: damaged.length };
 }
 
+// Tum collection'lari sirala (dinamik)
 async function sortAllCollections() {
-  console.log('--- Sorting COLOR collections ---');
-  for (const [color, collId] of Object.entries(COLOR_COLLECTIONS)) {
+  console.log('Fetching all collections...');
+  const collections = await fetchAllCollections();
+  console.log('Found ' + collections.length + ' collections');
+
+  for (const col of collections) {
     try {
-      console.log('Color: ' + color);
-      const stats = await sortColorCollection(color, collId);
-      if (stats.skip) { console.log('  (empty)'); continue; }
-      console.log('  G1=' + stats.g1 + ' G2=' + stats.g2 + ' G3=' + stats.g3 + ' G4=' + stats.g4);
-    } catch (err) { console.error('  Error: ' + err.message); }
+      if (COLOR_HANDLES.includes(col.handle)) {
+        // Renk collection - 4 kademeli
+        const colorKey = HANDLE_TO_COLOR[col.handle];
+        console.log('COLOR ' + col.handle + ' (' + colorKey + ')');
+        const stats = await sortColorCollection(colorKey, col.id);
+        if (stats.empty) { console.log('  (empty)'); }
+        else console.log('  G1=' + stats.g1 + ' G2=' + stats.g2 + ' G3=' + stats.g3 + ' G4=' + stats.g4);
+      } else {
+        // Diger collection - damaged assagida
+        console.log('OTHER ' + col.handle);
+        const stats = await sortOtherCollection(col.id);
+        if (stats.empty) { console.log('  (empty)'); }
+        else console.log('  Good=' + stats.good + ' Damaged=' + stats.damaged);
+      }
+    } catch (err) {
+      console.error('Error ' + col.handle + ': ' + err.message);
+    }
     await sleep(800);
   }
-
-  console.log('--- Sorting OTHER collections ---');
-  for (const [name, collId] of Object.entries(OTHER_COLLECTIONS)) {
-    try {
-      console.log('Other: ' + name);
-      const stats = await sortOtherCollection(collId);
-      if (stats.skip) { console.log('  (empty)'); continue; }
-      console.log('  Good=' + stats.good + ' Damaged=' + stats.damaged);
-    } catch (err) { console.error('  Error: ' + err.message); }
-    await sleep(800);
-  }
-
   console.log('=== All done! ===');
 }
 
+// Tek urun icin ilgili collection'lari sirala
 async function processProduct(productId) {
   const data = await gql(`
     query($id: ID!) {
@@ -251,31 +227,35 @@ async function processProduct(productId) {
         colorPrimary:   metafield(namespace:"custom", key:"color_primary")   { value }
         colorSecondary: metafield(namespace:"custom", key:"color_secondary")  { value }
         damaged:        metafield(namespace:"custom", key:"damaged")          { value }
+        collections(first: 50) {
+          edges { node { id handle } }
+        }
       }
     }
   `, { id: productId });
+
   const p = data.product;
-  const product = {
-    colorPrimary:   normalizeColor(p.colorPrimary?.value),
-    colorSecondary: normalizeColor(p.colorSecondary?.value),
-    damaged:        p.damaged?.value === 'true',
-  };
-  console.log('Product: ' + p.title + ' | primary:' + product.colorPrimary + ' secondary:' + product.colorSecondary + ' damaged:' + product.damaged);
+  const colorPrimary   = normalizeColor(p.colorPrimary?.value);
+  const colorSecondary = normalizeColor(p.colorSecondary?.value);
+  console.log('Product: ' + p.title + ' | primary:' + colorPrimary + ' secondary:' + colorSecondary + ' damaged:' + (p.damaged?.value === 'true'));
 
-  // Renk collectionlarini sirala
-  const colors = new Set();
-  if (product.colorPrimary   && COLOR_COLLECTIONS[product.colorPrimary])   colors.add(product.colorPrimary);
-  if (product.colorSecondary && COLOR_COLLECTIONS[product.colorSecondary]) colors.add(product.colorSecondary);
-  for (const color of colors) {
-    await sortColorCollection(color, COLOR_COLLECTIONS[color]);
-    await sleep(500);
-  }
-
-  // Diger tum collectionlari sirala
-  for (const [name, collId] of Object.entries(OTHER_COLLECTIONS)) {
+  // Urundeki tum collection'lari sirala
+  for (const e of p.collections.edges) {
+    const col = e.node;
     try {
-      await sortOtherCollection(collId);
-    } catch (err) { console.error('Error ' + name + ': ' + err.message); }
+      if (COLOR_HANDLES.includes(col.handle)) {
+        const colorKey = HANDLE_TO_COLOR[col.handle];
+        console.log('COLOR ' + col.handle);
+        const stats = await sortColorCollection(colorKey, col.id);
+        console.log('  G1=' + stats.g1 + ' G2=' + stats.g2 + ' G3=' + stats.g3 + ' G4=' + stats.g4);
+      } else {
+        console.log('OTHER ' + col.handle);
+        const stats = await sortOtherCollection(col.id);
+        console.log('  Good=' + stats.good + ' Damaged=' + stats.damaged);
+      }
+    } catch (err) {
+      console.error('Error ' + col.handle + ': ' + err.message);
+    }
     await sleep(500);
   }
 }
@@ -328,10 +308,10 @@ app.get('/test-token', async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '4.0' });
+  res.json({ status: 'ok', shop: SHOP_DOMAIN, version: '5.0-dynamic' });
 });
 
 app.listen(PORT, () => {
-  console.log('Sort Service v4.0 running on port ' + PORT);
+  console.log('Sort Service v5.0 (dynamic) running on port ' + PORT);
   console.log('Shop: ' + SHOP_DOMAIN);
 });
